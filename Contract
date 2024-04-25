@@ -1,0 +1,72 @@
+// Importar las dependencias de NEAR SDK
+import { Context, PersistentMap, logging } from "near-sdk-as";
+
+// Enumeración para tipos de energía renovable
+enum RenewableType {
+    Solar,
+    Wind
+}
+
+// Estructura para representar una oferta de energía en el mercado
+@nearBindgen
+class EnergyOffer {
+    constructor(
+        public sellerId: string,
+        public amount: f64, // Cantidad de energía en kWh
+        public pricePerKWh: f64, // Precio por kWh
+        public energyType: RenewableType // Tipo de energía renovable
+    ) {}
+}
+
+// Estructura para representar un contrato de compra de energía
+@nearBindgen
+class EnergyContract {
+    constructor(
+        public buyerId: string,
+        public sellerId: string,
+        public amount: f64,
+        public totalCost: f64,
+        public energyType: RenewableType
+    ) {}
+}
+
+// Mapas persistentes para guardar ofertas y contratos
+const offers = new PersistentMap<string, EnergyOffer>("o");
+const contracts = new PersistentMap<string, EnergyContract>("c");
+
+// Función para registrar una oferta de energía
+export function registerOffer(amount: f64, pricePerKWh: f64, energyType: RenewableType): void {
+    const sellerId = Context.sender;
+    const offerId = `${sellerId}:${Context.blockTimestamp}`;
+    const newOffer = new EnergyOffer(sellerId, amount, pricePerKWh, energyType);
+    offers.set(offerId, newOffer);
+    logging.log(`Offer registered: ${offerId} with energy type: ${energyType}`);
+}
+
+// Función para aceptar una oferta y crear un contrato de compra
+export function acceptOffer(offerId: string): void {
+    assert(offers.contains(offerId), "Offer not found");
+    const offer = offers.getSome(offerId);
+    const buyerId = Context.sender;
+    const totalCost = offer.amount * offer.pricePerKWh;
+
+    // Asegurarse que el comprador tenga suficiente NEAR para la transacción
+    assert(Context.attachedDeposit >= totalCost, "Insufficient deposit");
+
+    const newContract = new EnergyContract(buyerId, offer.sellerId, offer.amount, totalCost, offer.energyType);
+    const contractId = `${buyerId}:${offer.sellerId}:${Context.blockTimestamp}`;
+    contracts.set(contractId, newContract);
+    offers.delete(offerId); // Eliminar la oferta del mercado
+
+    logging.log(`Energy contract created: ${contractId} using ${offer.energyType}`);
+}
+
+// Función para consultar las ofertas disponibles
+export function getOffers(): EnergyOffer[] {
+    return offers.values();
+}
+
+// Función para consultar los contratos existentes
+export function getContracts(): EnergyContract[] {
+    return contracts.values();
+}
